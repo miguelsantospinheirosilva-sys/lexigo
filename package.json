@@ -1,0 +1,13 @@
+{
+  "name": "lexigo-dict",
+  "version": "1.0.0",
+  "description": "Dicionário inglês-português estilo Bravolol",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.5.0"
+  }
+}
