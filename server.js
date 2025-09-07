@@ -1,44 +1,35 @@
-const express = require("express");
-const cors = require("cors");
-const fetch = require("node-fetch");
+const express = require('express');
+const cors = require('cors');
 
 const app = express();
-app.use(cors()); // libera acesso de qualquer frontend
-app.use(express.json());
+app.use(cors());
 
-// rota simples de teste
-app.get("/", (req, res) => {
-  res.send("Servidor está rodando 🚀");
-});
-
-// endpoint de tradução
-app.get("/translate", async (req, res) => {
+// Endpoint para palavras
+app.get('/translate', (req, res) => {
   const word = req.query.word;
-  if (!word) {
-    return res.status(400).json({ error: "Parâmetro 'word' é obrigatório" });
-  }
+  if (!word) return res.json({ error: "Nenhuma palavra fornecida" });
 
-  try {
-    // exemplo mockado só pra garantir que responde
-    // aqui você conecta APIs (Gemini ou gratuitas)
-    const translation = {
-      word,
-      meaning: "tradução de exemplo",
-      examples: [
-        `Exemplo 1 com ${word}`,
-        `Exemplo 2 com ${word}`
-      ],
-      phonetic: "/fəˈnɛtɪk/"
-    };
-
-    res.json(translation);
-  } catch (err) {
-    res.status(500).json({ error: "Erro interno", details: err.message });
-  }
+  res.json({
+    word: word,
+    meaning: "tradução de exemplo",
+    phonetic: "/fəˈnɛtɪk/",
+    examples: [
+      `Exemplo 1 com ${word}`,
+      `Exemplo 2 com ${word}`
+    ]
+  });
 });
 
-// Render exige usar process.env.PORT
+// Endpoint para textos
+app.get('/translateText', (req, res) => {
+  const text = req.query.text;
+  if (!text) return res.json({ error: "Nenhum texto fornecido" });
+
+  res.json({
+    text: text,
+    translation: "tradução de exemplo"
+  });
+});
+
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
