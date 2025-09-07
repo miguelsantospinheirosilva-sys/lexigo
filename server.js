@@ -1,50 +1,44 @@
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
+const express = require("express");
+const cors = require("cors");
+const fetch = require("node-fetch");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-let cache = {};
-const wordsFile = path.join(__dirname, 'words.json');
-
-// Load words.json if exists
-if (fs.existsSync(wordsFile)) {
-  cache = JSON.parse(fs.readFileSync(wordsFile, 'utf-8'));
-}
-
+app.use(cors()); // libera acesso de qualquer frontend
 app.use(express.json());
-app.use(express.static('public'));
 
-// Endpoint to search word
-app.post('/search', async (req, res) => {
-  const { word } = req.body;
-  if (!word) return res.status(400).json({ error: 'No word provided' });
+// rota simples de teste
+app.get("/", (req, res) => {
+  res.send("Servidor está rodando 🚀");
+});
 
-  // Check internal cache
-  if (cache[word]) return res.json(cache[word]);
+// endpoint de tradução
+app.get("/translate", async (req, res) => {
+  const word = req.query.word;
+  if (!word) {
+    return res.status(400).json({ error: "Parâmetro 'word' é obrigatório" });
+  }
 
   try {
-    // Fallback API: Gemini, MyMemory, LibreTranslate
-    const geminiResponse = await axios.post('https://api.gemini.com/translate', { word });
-    const data = geminiResponse.data;
-
-    // Example structure
-    const result = {
-      translation: data.translation,
-      examples: data.examples,
-      audio: data.audio
+    // exemplo mockado só pra garantir que responde
+    // aqui você conecta APIs (Gemini ou gratuitas)
+    const translation = {
+      word,
+      meaning: "tradução de exemplo",
+      examples: [
+        `Exemplo 1 com ${word}`,
+        `Exemplo 2 com ${word}`
+      ],
+      phonetic: "/fəˈnɛtɪk/"
     };
 
-    // Save to cache
-    cache[word] = result;
-    fs.writeFileSync(wordsFile, JSON.stringify(cache, null, 2));
-
-    res.json(result);
+    res.json(translation);
   } catch (err) {
-    res.status(500).json({ error: 'Translation failed' });
+    res.status(500).json({ error: "Erro interno", details: err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Render exige usar process.env.PORT
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
