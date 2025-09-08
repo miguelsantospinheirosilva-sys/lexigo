@@ -1,100 +1,96 @@
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const axios = require('axios');
+// server.js
+const express = require("express");
+const axios = require("axios");
+const fs = require("fs");
+const cors = require("cors");
 const app = express();
+
 app.use(cors());
-
-const CACHE_FILE = 'word_cache.json';
-
-// Carregar cache local
-let cache = {};
-if (fs.existsSync(CACHE_FILE)) {
-  cache = JSON.parse(fs.readFileSync(CACHE_FILE));
-}
-
-// Função para salvar cache
-function saveCache() {
-  fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
-}
-
-// Fallback de APIs gratuitas conhecidas:
-// 1. MyMemory (gratuita, limites diários)
-// 2. LibreTranslate (gratuita, sem necessidade de chave)
-
-async function getTranslationFromAPIs(word) {
-  // Primeiro: MyMemory
-  try {
-    const res = await axios.get('https://api.mymemory.translated.net/get', {
-      params: { q: word, langpair: 'en|pt' }
-    });
-    const translation = res.data.responseData.translatedText;
-    return { translation, examples: [`Exemplo 1: ${word}`, `Exemplo 2: ${word}`], phonetic: "" };
-  } catch (e) {
-    console.log("MyMemory falhou, tentando LibreTranslate...");
-  }
-
-  // Segundo: LibreTranslate
-  try {
-    const res = await axios.post('https://libretranslate.com/translate', {
-      q: word,
-      source: 'en',
-      target: 'pt',
-      format: 'text'
-    }, { headers: { 'Content-Type': 'application/json' } });
-    const translation = res.data.translatedText;
-    return { translation, examples: [`Exemplo 1: ${word}`, `Exemplo 2: ${word}`], phonetic: "" };
-  } catch (e) {
-    console.log("LibreTranslate falhou, usando fallback interno...");
-  }
-
-  // Fallback interno
-  return { translation: "tradução não disponível", examples: [], phonetic: "" };
-}
-
-// Endpoint para palavras
-app.get('/translate', async (req, res) => {
-  const word = req.query.word;
-  if (!word) return res.json({ error: "Nenhuma palavra fornecida" });
-
-  // Checar cache interno
-  if (cache[word]) return res.json(cache[word]);
-
-  // Buscar nas APIs gratuitas
-  const result = await getTranslationFromAPIs(word);
-
-  const response = {
-    word: word,
-    meaning: result.translation,
-    examples: result.examples,
-    phonetic: result.phonetic
-  };
-
-  // Salvar no cache interno + arquivo JSON
-  cache[word] = response;
-  saveCache();
-
-  res.json(response);
-});
-
-// Endpoint para textos
-app.get('/translateText', async (req, res) => {
-  const text = req.query.text;
-  if (!text) return res.json({ error: "Nenhum texto fornecido" });
-
-  try {
-    const resAPI = await axios.post('https://libretranslate.com/translate', {
-      q: text,
-      source: 'en',
-      target: 'pt',
-      format: 'text'
-    }, { headers: { 'Content-Type': 'application/json' } });
-
-    res.json({ text, translation: resAPI.data.translatedText });
-  } catch (e) {
-    res.json({ text, translation: "tradução não disponível" });
-  }
-});
+app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
+
+// ---------------------
+// Configurações
+// ---------------------
+const GITHUB_JSON_URL = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/fixed_words.json";
+const AUTOMATIC_JSON_PATH = "./automatic_words.json";
+const AUTOMATIC_LIMIT = 10000; // limite de palavras no JSON automático
+
+// Carregar JSON automático ou criar vazio
+let automaticJSON = {};
+if (fs.existsSync(AUTOMATIC_JSON_PATH)) {
+  automaticJSON = JSON.parse(fs.readFileSync(AUTOMATIC_JSON_PATH));
+}
+
+// ---------------------
+// Função para buscar pronúncia, áudio e tradução
+// ---------------------
+async function fetchFromAPI(word) {
+  try {
+    // Exemplo usando API gratuita fictícia (substitua por reais)
+    const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+    const data = response.data[0];
+    return {
+      word: word,
+      meaning: data.meanings[0].definitions[0].definition || "Sem tradução",
+      phonetic: data.phonetic || "",
+      audio: data.phonetics?.find(p => p.audio)?.audio || "",
+    };
+  } catch (error) {
+    console.log("Erro API:", error.message);
+    return {
+      word: word,
+      meaning: "Tradução não disponível",
+      phonetic: "",
+      audio: "",
+    };
+  }
+}
+
+// ---------------------
+// Endpoint principal de busca
+// ---------------------
+app.get("/translate/:word", async (req, res) => {
+  const word = req.params.word.toLowerCase();
+
+  // 1. Cache interno (simulado por memória do Node.js)
+  if (automaticJSON[word]) {
+    return res.json(automaticJSON[word]);
+  }
+
+  // 2. JSON fixo do GitHub
+  try {
+    const githubData = await axios.get(GITHUB_JSON_URL);
+    const fixedJSON = githubData.data;
+    if (fixedJSON[word]) {
+      // Preencher pronúncia e áudio via API
+      const apiResult = await fetchFromAPI(word);
+      // Salvar no JSON automático
+      if (Object.keys(automaticJSON).length < AUTOMATIC_LIMIT) {
+        automaticJSON[word] = apiResult;
+        fs.writeFileSync(AUTOMATIC_JSON_PATH, JSON.stringify(automaticJSON, null, 2));
+      }
+      return res.json(apiResult);
+    }
+  } catch (error) {
+    console.log("Erro GitHub JSON:", error.message);
+  }
+
+  // 3. JSON automático
+  if (automaticJSON[word]) {
+    return res.json(automaticJSON[word]);
+  }
+
+  // 4. Se não estiver em lugar nenhum → API
+  const apiResult = await fetchFromAPI(word);
+  if (Object.keys(automaticJSON).length < AUTOMATIC_LIMIT) {
+    automaticJSON[word] = apiResult;
+    fs.writeFileSync(AUTOMATIC_JSON_PATH, JSON.stringify(automaticJSON, null, 2));
+  }
+  return res.json(apiResult);
+});
+
+// ---------------------
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
