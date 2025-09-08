@@ -1,96 +1,126 @@
-// server.js
 const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
-const cors = require("cors");
 const app = express();
-
-app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// ---------------------
-// Configurações
-// ---------------------
-const GITHUB_JSON_URL = "https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/fixed_words.json";
-const AUTOMATIC_JSON_PATH = "./automatic_words.json";
-const AUTOMATIC_LIMIT = 10000; // limite de palavras no JSON automático
+// Cache interno em memória
+let cache = {};
 
-// Carregar JSON automático ou criar vazio
-let automaticJSON = {};
-if (fs.existsSync(AUTOMATIC_JSON_PATH)) {
-  automaticJSON = JSON.parse(fs.readFileSync(AUTOMATIC_JSON_PATH));
+// JSON fixo carregado do GitHub ou local
+let fixedWords = {};
+try {
+  fixedWords = JSON.parse(fs.readFileSync("fixed_words.json"));
+} catch (err) {
+  console.log("Erro ao carregar fixed_words.json:", err);
 }
 
-// ---------------------
-// Função para buscar pronúncia, áudio e tradução
-// ---------------------
-async function fetchFromAPI(word) {
+// Função para atualizar JSON automático
+function updateJSON(word, data) {
+  let autoWords = {};
+  const filePath = "auto_words.json";
   try {
-    // Exemplo usando API gratuita fictícia (substitua por reais)
-    const response = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-    const data = response.data[0];
-    return {
-      word: word,
-      meaning: data.meanings[0].definitions[0].definition || "Sem tradução",
-      phonetic: data.phonetic || "",
-      audio: data.phonetics?.find(p => p.audio)?.audio || "",
-    };
-  } catch (error) {
-    console.log("Erro API:", error.message);
-    return {
-      word: word,
-      meaning: "Tradução não disponível",
-      phonetic: "",
-      audio: "",
-    };
+    autoWords = JSON.parse(fs.readFileSync(filePath));
+  } catch (err) {
+    autoWords = {};
   }
+  autoWords[word] = data;
+  fs.writeFileSync(filePath, JSON.stringify(autoWords, null, 2));
 }
 
-// ---------------------
-// Endpoint principal de busca
-// ---------------------
+// Função principal de tradução
+async function fetchFromAPIs(word) {
+  let result = null;
+
+  // DictionaryAPI
+  try {
+    const dictResp = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+    if (dictResp.data && dictResp.data[0]) {
+      const entry = dictResp.data[0];
+      result = {
+        word: entry.word,
+        meaning: entry.meanings[0].definitions[0].definition || "",
+        phonetic: entry.phonetic || "",
+        audio: entry.phonetics && entry.phonetics[0] ? entry.phonetics[0].audio : ""
+      };
+      return result;
+    }
+  } catch (err) {
+    console.log("DictionaryAPI falhou para:", word);
+  }
+
+  // OwlBot API (gratuita com limite diário)
+  try {
+    const owlResp = await axios.get(`https://owlbot.info/api/v4/dictionary/${word}`, {
+      headers: { Authorization: "Token " } // você pode deixar vazio, OwlBot funciona parcialmente
+    });
+    if (owlResp.data) {
+      result = {
+        word: owlResp.data.word,
+        meaning: owlResp.data.definitions[0].definition || "",
+        phonetic: owlResp.data.pronunciation || "",
+        audio: owlResp.data.definitions[0].emoji || ""
+      };
+      return result;
+    }
+  } catch (err) {
+    console.log("OwlBot API falhou para:", word);
+  }
+
+  // Free Dictionary API
+  try {
+    const freeResp = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+    if (freeResp.data && freeResp.data[0]) {
+      const entry = freeResp.data[0];
+      result = {
+        word: entry.word,
+        meaning: entry.meanings[0].definitions[0].definition || "",
+        phonetic: entry.phonetic || "",
+        audio: entry.phonetics && entry.phonetics[0] ? entry.phonetics[0].audio : ""
+      };
+      return result;
+    }
+  } catch (err) {
+    console.log("Free Dictionary API falhou para:", word);
+  }
+
+  // Se nenhuma API respondeu
+  return { word, meaning: "Tradução não encontrada", phonetic: "", audio: "" };
+}
+
+// Endpoint de tradução
 app.get("/translate/:word", async (req, res) => {
   const word = req.params.word.toLowerCase();
 
-  // 1. Cache interno (simulado por memória do Node.js)
-  if (automaticJSON[word]) {
-    return res.json(automaticJSON[word]);
+  // 1. Cache interno
+  if (cache[word]) return res.json(cache[word]);
+
+  // 2. JSON fixo
+  if (fixedWords[word]) {
+    cache[word] = fixedWords[word];
+    return res.json(fixedWords[word]);
   }
 
-  // 2. JSON fixo do GitHub
+  // 3. JSON automático (auto_words.json)
+  let autoWords = {};
   try {
-    const githubData = await axios.get(GITHUB_JSON_URL);
-    const fixedJSON = githubData.data;
-    if (fixedJSON[word]) {
-      // Preencher pronúncia e áudio via API
-      const apiResult = await fetchFromAPI(word);
-      // Salvar no JSON automático
-      if (Object.keys(automaticJSON).length < AUTOMATIC_LIMIT) {
-        automaticJSON[word] = apiResult;
-        fs.writeFileSync(AUTOMATIC_JSON_PATH, JSON.stringify(automaticJSON, null, 2));
-      }
-      return res.json(apiResult);
+    autoWords = JSON.parse(fs.readFileSync("auto_words.json"));
+    if (autoWords[word]) {
+      cache[word] = autoWords[word];
+      return res.json(autoWords[word]);
     }
-  } catch (error) {
-    console.log("Erro GitHub JSON:", error.message);
-  }
+  } catch (err) {}
 
-  // 3. JSON automático
-  if (automaticJSON[word]) {
-    return res.json(automaticJSON[word]);
-  }
+  // 4. Consultar APIs
+  const data = await fetchFromAPIs(word);
 
-  // 4. Se não estiver em lugar nenhum → API
-  const apiResult = await fetchFromAPI(word);
-  if (Object.keys(automaticJSON).length < AUTOMATIC_LIMIT) {
-    automaticJSON[word] = apiResult;
-    fs.writeFileSync(AUTOMATIC_JSON_PATH, JSON.stringify(automaticJSON, null, 2));
-  }
-  return res.json(apiResult);
+  // Atualiza cache e JSON automático
+  cache[word] = data;
+  updateJSON(word, data);
+
+  res.json(data);
 });
 
-// ---------------------
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
