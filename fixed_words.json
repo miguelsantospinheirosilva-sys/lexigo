@@ -283,7 +283,7 @@
     { "expression": "work on", "translation": "trabalhar em" },
     { "expression": "wrap up", "translation": "finalizar; embrulhar" }
   ]
-}{
+}
   "words": [
     { "word": "ability", "translation": "habilidade" },
     { "word": "accident", "translation": "acidente" },
@@ -431,7 +431,7 @@
     { "expression": "run into", "translation": "encontrar por acaso; colidir" },
     { "expression": "see through", "translation": "perceber; enxergar claramente" }
   ]
-}{
+}
   "words": [
     { "word": "ability", "translation": "habilidade" },
     { "word": "accuse", "translation": "acusar" },
@@ -592,7 +592,7 @@
     { "expression": "turn down", "translation": "recusar; abaixar" },
     { "expression": "turn off", "translation": "desligar" }
   ]
-}{
+}
   "words": [
     { "word": "accomplishment", "translation": "realização" },
     { "word": "accuracy", "translation": "precisão" },
@@ -735,7 +735,7 @@
     { "expression": "go over", "translation": "revisar; examinar" },
     { "expression": "grow into", "translation": "crescer e tornar-se" }
   ]
-}{
+}
   "words": [
     { "word": "magic", "translation": "magia" },
     { "word": "magnet", "translation": "ímã" },
@@ -1032,7 +1032,7 @@
     { "expression": "take apart", "translation": "desmontar; criticar" },
     { "expression": "take over", "translation": "assumir controle" }
   ]
-}{
+}
   "words": [
     { "word": "teacher", "translation": "professor; professora" },
     { "word": "tear", "translation": "rasgar; lágrima" },
@@ -1237,7 +1237,7 @@
     { "expression": "turn down", "translation": "recusar; abaixar" },
     { "expression": "turn up", "translation": "aparecer; aumentar" }
   ]
-}
+
 
 
 
