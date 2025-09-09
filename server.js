@@ -1,126 +1,90 @@
-const express = require("express");
-const axios = require("axios");
-const fs = require("fs");
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
 const app = express();
+
 app.use(express.json());
 
-const PORT = process.env.PORT || 10000;
+// Cache interno
+let internalCache = {};
 
-// Cache interno em memória
-let cache = {};
-
-// JSON fixo carregado do GitHub ou local
-let fixedWords = {};
-try {
-  fixedWords = JSON.parse(fs.readFileSync("fixed_words.json"));
-} catch (err) {
-  console.log("Erro ao carregar fixed_words.json:", err);
+// Carregar múltiplos arquivos JSON fixos
+const fixedJSONFiles = [];
+for (let i = 1; i <= 10; i++) {
+  const filePath = path.join(__dirname, `fixed_part${i}.json`);
+  if (fs.existsSync(filePath)) {
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    fixedJSONFiles.push(data);
+  }
 }
 
-// Função para atualizar JSON automático
-function updateJSON(word, data) {
-  let autoWords = {};
-  const filePath = "auto_words.json";
-  try {
-    autoWords = JSON.parse(fs.readFileSync(filePath));
-  } catch (err) {
-    autoWords = {};
+// JSON automático para palavras pesquisadas
+const autoJSONPath = path.join(__dirname, 'auto_words.json');
+let autoWords = {};
+if (fs.existsSync(autoJSONPath)) {
+  autoWords = JSON.parse(fs.readFileSync(autoJSONPath, 'utf8'));
+}
+
+// Funções de busca e atualização
+function searchFixedWords(word) {
+  for (let file of fixedJSONFiles) {
+    if (file[word]) return file[word];
   }
+  return null;
+}
+
+function searchAutoWords(word) {
+  return autoWords[word] || null;
+}
+
+function updateAutoWords(word, data) {
   autoWords[word] = data;
-  fs.writeFileSync(filePath, JSON.stringify(autoWords, null, 2));
+  fs.writeFileSync(autoJSONPath, JSON.stringify(autoWords, null, 2));
 }
 
-// Função principal de tradução
+// Função para consultar APIs gratuitas
 async function fetchFromAPIs(word) {
-  let result = null;
-
-  // DictionaryAPI
   try {
-    const dictResp = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-    if (dictResp.data && dictResp.data[0]) {
-      const entry = dictResp.data[0];
-      result = {
-        word: entry.word,
-        meaning: entry.meanings[0].definitions[0].definition || "",
-        phonetic: entry.phonetic || "",
-        audio: entry.phonetics && entry.phonetics[0] ? entry.phonetics[0].audio : ""
-      };
-      return result;
-    }
+    const res = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+    const result = res.data[0];
+    const meaning = result.meanings[0].definitions[0].definition;
+    const phonetic = result.phonetic || '';
+    const audio = result.phonetics[0]?.audio || '';
+    return { word, meaning, phonetic, audio };
   } catch (err) {
-    console.log("DictionaryAPI falhou para:", word);
+    return null;
   }
-
-  // OwlBot API (gratuita com limite diário)
-  try {
-    const owlResp = await axios.get(`https://owlbot.info/api/v4/dictionary/${word}`, {
-      headers: { Authorization: "Token " } // você pode deixar vazio, OwlBot funciona parcialmente
-    });
-    if (owlResp.data) {
-      result = {
-        word: owlResp.data.word,
-        meaning: owlResp.data.definitions[0].definition || "",
-        phonetic: owlResp.data.pronunciation || "",
-        audio: owlResp.data.definitions[0].emoji || ""
-      };
-      return result;
-    }
-  } catch (err) {
-    console.log("OwlBot API falhou para:", word);
-  }
-
-  // Free Dictionary API
-  try {
-    const freeResp = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-    if (freeResp.data && freeResp.data[0]) {
-      const entry = freeResp.data[0];
-      result = {
-        word: entry.word,
-        meaning: entry.meanings[0].definitions[0].definition || "",
-        phonetic: entry.phonetic || "",
-        audio: entry.phonetics && entry.phonetics[0] ? entry.phonetics[0].audio : ""
-      };
-      return result;
-    }
-  } catch (err) {
-    console.log("Free Dictionary API falhou para:", word);
-  }
-
-  // Se nenhuma API respondeu
-  return { word, meaning: "Tradução não encontrada", phonetic: "", audio: "" };
 }
 
 // Endpoint de tradução
-app.get("/translate/:word", async (req, res) => {
+app.get('/translate/:word', async (req, res) => {
   const word = req.params.word.toLowerCase();
 
-  // 1. Cache interno
-  if (cache[word]) return res.json(cache[word]);
+  if (internalCache[word]) return res.json(internalCache[word]);
 
-  // 2. JSON fixo
-  if (fixedWords[word]) {
-    cache[word] = fixedWords[word];
-    return res.json(fixedWords[word]);
+  const fixedData = searchFixedWords(word);
+  if (fixedData) {
+    internalCache[word] = fixedData;
+    return res.json(fixedData);
   }
 
-  // 3. JSON automático (auto_words.json)
-  let autoWords = {};
-  try {
-    autoWords = JSON.parse(fs.readFileSync("auto_words.json"));
-    if (autoWords[word]) {
-      cache[word] = autoWords[word];
-      return res.json(autoWords[word]);
-    }
-  } catch (err) {}
+  const autoData = searchAutoWords(word);
+  if (autoData) {
+    internalCache[word] = autoData;
+    return res.json(autoData);
+  }
 
-  // 4. Consultar APIs
-  const data = await fetchFromAPIs(word);
+  const apiData = await fetchFromAPIs(word);
+  if (apiData) {
+    internalCache[word] = apiData;
+    updateAutoWords(word, apiData);
+    return res.json(apiData);
+  }
 
-  // Atualiza cache e JSON automático
-  cache[word] = data;
-  updateJSON(word, data);
-
-  res.json(data);
+  res.status(404).json({ error: 'Word not found' });
 });
 
+// Usar a porta fornecida pelo ambiente ou fallback
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
