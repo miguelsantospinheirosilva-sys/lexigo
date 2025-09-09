@@ -4,16 +4,17 @@ const fs = require("fs");
 const axios = require("axios");
 const app = express();
 
-// Habilita CORS para Base44
+// Habilita CORS para que Base44 consiga chamar o backend
 app.use(cors());
 
-// Porta padrão
+// Porta padrão para Base44
 const PORT = process.env.PORT || 3000;
 
 // Carregar arquivos JSON fixos
 const fixedFiles = ["bloco1.json","bloco2.json","bloco3.json","bloco4.json","bloco5.json"];
 let fixedWords = [];
 
+// Carregar palavras fixas
 fixedFiles.forEach(file => {
   try {
     const data = fs.readFileSync(`./${file}`, "utf-8");
@@ -26,103 +27,74 @@ fixedFiles.forEach(file => {
   }
 });
 
-// Cache interno
+// Cache interno para respostas recentes
 let cache = {};
 
-// Função auxiliar: tenta obter phonetic via DictionaryAPI.dev
-async function getPhoneticDictionaryAPI(word) {
-  try {
-    const res = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-    const data = res.data[0];
-    if (data && data.phonetic) return data.phonetic;
-    if (data && data.phonetics && data.phonetics[0]) return data.phonetics[0].text || "";
-    return "";
-  } catch {
-    return "";
-  }
-}
-
-// Função auxiliar: tenta obter phonetic via WordsAPI (gratuita limitada)
-async function getPhoneticWordsAPI(word) {
-  try {
-    const res = await axios.get(`https://wordsapiv1.p.rapidapi.com/words/${word}`, {
-      headers: {
-        "X-RapidAPI-Key": "", // sem chave não funciona, mas pode registrar para teste
-        "X-RapidAPI-Host": "wordsapiv1.p.rapidapi.com"
-      }
-    });
-    return res.data.pronunciation ? res.data.pronunciation.all || "" : "";
-  } catch {
-    return "";
-  }
-}
-
-// Função auxiliar: Oxford Dictionaries API (precisa registro)
-async function getPhoneticOxford(word) {
-  try {
-    const app_id = ""; // coloque seu app_id
-    const app_key = ""; // coloque seu app_key
-    const lang = "en-gb";
-    const res = await axios.get(`https://od-api.oxforddictionaries.com/api/v2/entries/${lang}/${word.toLowerCase()}`, {
-      headers: { "app_id": app_id, "app_key": app_key }
-    });
-    const lexicalEntries = res.data.results[0].lexicalEntries;
-    if (lexicalEntries && lexicalEntries[0].entries && lexicalEntries[0].entries[0].pronunciations) {
-      return lexicalEntries[0].entries[0].pronunciations[0].phoneticSpelling || "";
-    }
-    return "";
-  } catch {
-    return "";
-  }
-}
-
-// Função para gerar áudio via Google TTS sem chave
-function getAudioGoogleTTS(word) {
-  const encoded = encodeURIComponent(word);
-  return `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encoded}`;
-}
-
-// Função principal: busca dados da palavra
+// Função para buscar dados da palavra
 async function getWordData(word) {
-  if (!word) return { error: "Word is undefined" };
+  if (!word) return { error: "Palavra inválida" };
 
-  // 1️⃣ Cache interno
+  // Primeiro verifica cache
   if (cache[word]) return cache[word];
 
-  // 2️⃣ Palavras fixas
+  // Depois verifica palavras fixas
   let fixed = fixedWords.find(w => w.word.toLowerCase() === word.toLowerCase());
   if (fixed) {
-    // tenta preencher phonetic + áudio se não tiver
-    if (!fixed.phonetic) fixed.phonetic = await getPhoneticDictionaryAPI(word) || await getPhoneticWordsAPI(word) || await getPhoneticOxford(word) || "";
-    if (!fixed.audio) fixed.audio = getAudioGoogleTTS(word);
     cache[word] = fixed;
     return fixed;
   }
 
-  // 3️⃣ APIs externas
-  let phonetic = await getPhoneticDictionaryAPI(word);
-  if (!phonetic) phonetic = await getPhoneticWordsAPI(word);
-  if (!phonetic) phonetic = await getPhoneticOxford(word);
+  // Se não achar, chama APIs externas
+  try {
+    // Tradução e phonetic via Free Dictionary API
+    const dictRes = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+    const data = dictRes.data[0];
 
-  const translation = word; // tradução básica: pode substituir por sua API de tradução se quiser
+    const phonetic = data.phonetic || (data.phonetics && data.phonetics[0] ? data.phonetics[0].text : "");
+    
+    const result = {
+      word: word,
+      translation: word, // opcional: traduzir aqui se tiver outra API gratuita
+      phonetic: phonetic
+    };
 
-  const result = {
-    word,
-    translation,
-    phonetic,
-    audio: getAudioGoogleTTS(word)
-  };
-
-  // salvar no cache
-  cache[word] = result;
-  return result;
+    cache[word] = result;
+    return result;
+  } catch (err) {
+    return { error: "Não foi possível obter dados da palavra." };
+  }
 }
 
-// Endpoint
+// Endpoint de tradução + fonética
 app.get("/translate/:word", async (req, res) => {
   const { word } = req.params;
-  const data = await getWordData(word);
-  res.json(data);
+  const result = await getWordData(word);
+  res.json(result);
+});
+
+// Proxy de TTS para evitar problemas de CORS
+app.get("/tts/:word", async (req, res) => {
+  const { word } = req.params;
+  if (!word) return res.status(400).send("Palavra inválida");
+
+  try {
+    // Usando TTS gratuito sem key (voz simples)
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(word)}`;
+
+    const response = await axios({
+      method: "GET",
+      url: ttsUrl,
+      responseType: "stream",
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    response.data.pipe(res);
+  } catch (err) {
+    res.status(500).send("Erro ao gerar áudio TTS");
+  }
 });
 
 // Inicia servidor
