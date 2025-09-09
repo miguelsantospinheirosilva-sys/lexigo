@@ -4,22 +4,36 @@ const fs = require("fs");
 const axios = require("axios");
 const app = express();
 
-// Habilita CORS para que o Base44 consiga chamar o backend
+// Habilita CORS para que o front-end (Base44) consiga chamar o backend
 app.use(cors());
 
-// Porta padrão para Base44
+// Porta padrão para Base44 / Render
 const PORT = process.env.PORT || 3000;
 
-// Carregar arquivos JSON fixos
-const fixedFiles = ["bloco1.json","bloco2.json","bloco3.json","bloco4.json","bloco5.json"];
+// Arquivos JSON fixos
+const fixedFiles = ["bloco1.json", "bloco2.json", "bloco3.json", "bloco4.json", "bloco5.json"];
 let fixedWords = [];
 
-// Carregar palavras fixas
+// Carregar palavras e expressões dos arquivos JSON
 fixedFiles.forEach(file => {
   try {
     const data = fs.readFileSync(`./${file}`, "utf-8");
-    const words = JSON.parse(data);
-    fixedWords = fixedWords.concat(words);
+    const json = JSON.parse(data);
+
+    // Adiciona palavras
+    if (Array.isArray(json.words)) {
+      const validWords = json.words.filter(w => w.word && w.translation);
+      fixedWords = fixedWords.concat(validWords);
+    }
+
+    // Adiciona expressões
+    if (Array.isArray(json.expressions)) {
+      const validExpr = json.expressions
+        .filter(e => e.expression && e.translation)
+        .map(e => ({ word: e.expression, translation: e.translation }));
+      fixedWords = fixedWords.concat(validExpr);
+    }
+
   } catch (err) {
     console.error(`Erro ao carregar ${file}:`, err.message);
   }
@@ -30,31 +44,34 @@ let cache = {};
 
 // Função para buscar tradução, pronúncia e áudio
 async function getWordData(word) {
+  if (!word) return { error: "Invalid word input." };
+
   // Primeiro verifica cache interno
-  if (cache[word]) return cache[word];
+  if (cache[word.toLowerCase()]) return cache[word.toLowerCase()];
 
   // Depois verifica palavras fixas
   let fixed = fixedWords.find(w => w.word.toLowerCase() === word.toLowerCase());
   if (fixed) {
-    cache[word] = fixed;
+    cache[word.toLowerCase()] = fixed;
     return fixed;
   }
 
   // Se não achar, chama APIs externas
   try {
-    // Exemplo de API gratuita de TTS ou dicionário (substitua ou adicione mais APIs)
     const translationRes = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
     const data = translationRes.data[0];
 
     const result = {
       word: word,
-      meaning: data.meanings[0].definitions[0].definition,
+      meaning: data.meanings && data.meanings[0] && data.meanings[0].definitions[0]
+        ? data.meanings[0].definitions[0].definition
+        : "No definition found",
       phonetic: data.phonetic || "",
       audio: data.phonetics && data.phonetics[0] ? data.phonetics[0].audio : ""
     };
 
     // Salvar no cache interno
-    cache[word] = result;
+    cache[word.toLowerCase()] = result;
 
     return result;
 
