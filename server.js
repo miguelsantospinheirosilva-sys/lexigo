@@ -9,10 +9,10 @@ app.use(express.json());
 // Cache interno
 let internalCache = {};
 
-// Carregar múltiplos arquivos JSON fixos
+// Carregar múltiplos arquivos JSON fixos (bloco1.json até bloco5.json)
 const fixedJSONFiles = [];
-for (let i = 1; i <= 10; i++) {
-  const filePath = path.join(__dirname, `fixed_part${i}.json`);
+for (let i = 1; i <= 5; i++) {
+  const filePath = path.join(__dirname, `bloco${i}.json`);
   if (fs.existsSync(filePath)) {
     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     fixedJSONFiles.push(data);
