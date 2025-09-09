@@ -10,7 +10,7 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 
 // Carregar arquivos JSON fixos
-const fixedFiles = ["bloco1.json","bloco2.json","bloco3.json","bloco4.json","bloco5.json"];
+const fixedFiles = ["bloco1.json", "bloco2.json", "bloco3.json", "bloco4.json", "bloco5.json"];
 let fixedWords = [];
 
 // Função para validar objetos de palavra
