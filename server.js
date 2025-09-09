@@ -2,30 +2,34 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const axios = require("axios");
+
 const app = express();
 
-// Habilita CORS para que o Base44 consiga chamar o backend
+// Habilita CORS para que o front-end consiga chamar o backend
 app.use(cors());
 
-// Porta dinâmica para Render
+// Porta padrão para Render
 const PORT = process.env.PORT || 3000;
 
-// Carregar arquivos JSON fixos
-const fixedFiles = ["bloco1.json","bloco2.json","bloco3.json","bloco4.json","bloco5.json"];
+// Arquivos JSON fixos
+const fixedFiles = ["bloco1.json", "bloco2.json", "bloco3.json", "bloco4.json", "bloco5.json"];
 let fixedWords = [];
+let fixedExpressions = [];
 
-// Carregar palavras fixas
+// Carregar palavras e expressões fixas
 fixedFiles.forEach(file => {
   try {
     const data = fs.readFileSync(`./${file}`, "utf-8");
-    const parsed = JSON.parse(data);
-    // Proteção: só adiciona objetos que tenham 'word'
-    if (parsed.words && Array.isArray(parsed.words)) {
-      fixedWords = fixedWords.concat(parsed.words.filter(w => w.word));
+    const jsonData = JSON.parse(data);
+
+    // Proteção: carrega somente se existir e for array
+    if (jsonData.words && Array.isArray(jsonData.words)) {
+      fixedWords = fixedWords.concat(jsonData.words.filter(w => w.word));
     }
-    if (parsed.expressions && Array.isArray(parsed.expressions)) {
-      fixedWords = fixedWords.concat(parsed.expressions.map(e => ({ word: e.expression, translation: e.translation })));
+    if (jsonData.expressions && Array.isArray(jsonData.expressions)) {
+      fixedExpressions = fixedExpressions.concat(jsonData.expressions.filter(e => e.expression));
     }
+
   } catch (err) {
     console.error(`Erro ao carregar ${file}:`, err.message);
   }
@@ -34,33 +38,40 @@ fixedFiles.forEach(file => {
 // Cache interno para respostas recentes
 let cache = {};
 
-// Função para buscar tradução, pronúncia e áudio
+// Função para buscar dados da palavra
 async function getWordData(word) {
-  if (!word) return { error: "Word parameter is missing" };
+  if (!word) return { error: "Palavra inválida" };
 
-  // Primeiro verifica cache interno
+  // Primeiro verifica cache
   if (cache[word]) return cache[word];
 
-  // Depois verifica palavras fixas
+  // Verifica palavras fixas
   let fixed = fixedWords.find(w => w.word.toLowerCase() === word.toLowerCase());
   if (fixed) {
     cache[word] = fixed;
     return fixed;
   }
 
-  // Se não achar, chama APIs externas
+  // Verifica expressões fixas
+  let fixedExpr = fixedExpressions.find(e => e.expression.toLowerCase() === word.toLowerCase());
+  if (fixedExpr) {
+    cache[word] = fixedExpr;
+    return fixedExpr;
+  }
+
+  // Se não achar, tenta API externa
   try {
     const translationRes = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
     const data = translationRes.data[0];
 
     const result = {
       word: word,
-      meaning: data.meanings && data.meanings[0] && data.meanings[0].definitions[0] ? data.meanings[0].definitions[0].definition : "",
+      meaning: data.meanings && data.meanings[0] ? data.meanings[0].definitions[0].definition : "",
       phonetic: data.phonetic || "",
       audio: data.phonetics && data.phonetics[0] ? data.phonetics[0].audio : ""
     };
 
-    // Salvar no cache interno
+    // Salvar no cache
     cache[word] = result;
 
     return result;
