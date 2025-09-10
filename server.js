@@ -1,103 +1,113 @@
-const express = require("express");
-const cors = require("cors");
-const fs = require("fs");
-const axios = require("axios");
+import express from "express";
+import fs from "fs";
+import path from "path";
+import fetch from "node-fetch";
+
 const app = express();
+const PORT = process.env.PORT || 10000;
 
-// Habilita CORS para que Base44 consiga chamar o backend
-app.use(cors());
-
-// Porta padrão para Base44
-const PORT = process.env.PORT || 3000;
-
-// Carregar arquivos JSON fixos
-const fixedFiles = ["bloco1.json","bloco2.json","bloco3.json","bloco4.json","bloco5.json"];
-let fixedWords = [];
+// Sua chave Gemini (⚠️ recomendo usar variável de ambiente)
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyCjpLTtmRSQiRH0CVVVWLsqlQK-KIIXx7U";
 
 // Carregar palavras fixas
-fixedFiles.forEach(file => {
+const wordsPath = path.join(process.cwd(), "data", "words.json");
+let fixedWords = [];
+try {
+  const raw = fs.readFileSync(wordsPath, "utf8");
+  fixedWords = JSON.parse(raw).words || [];
+} catch (err) {
+  console.error("Erro ao carregar palavras fixas:", err);
+}
+
+// Função para buscar tradução no Gemini
+async function fetchFromGemini(word) {
   try {
-    const data = fs.readFileSync(`./${file}`, "utf-8");
-    const jsonData = JSON.parse(data);
-    if (jsonData.words) {
-      fixedWords = fixedWords.concat(jsonData.words.filter(w => w.word));
-    }
+    const response = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + GEMINI_API_KEY,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text: `Traduza a palavra inglesa "${word}" para o português brasileiro. Responda apenas com a tradução simples.`
+                }
+              ]
+            }
+          ]
+        })
+      }
+    );
+
+    const data = await response.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
   } catch (err) {
-    console.error(`Erro ao carregar ${file}:`, err.message);
-  }
-});
-
-// Cache interno para respostas recentes
-let cache = {};
-
-// Função para buscar dados da palavra
-async function getWordData(word) {
-  if (!word) return { error: "Palavra inválida" };
-
-  // Primeiro verifica cache
-  if (cache[word]) return cache[word];
-
-  // Depois verifica palavras fixas
-  let fixed = fixedWords.find(w => w.word.toLowerCase() === word.toLowerCase());
-  if (fixed) {
-    cache[word] = fixed;
-    return fixed;
-  }
-
-  // Se não achar, chama APIs externas
-  try {
-    // Tradução e phonetic via Free Dictionary API
-    const dictRes = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-    const data = dictRes.data[0];
-
-    const phonetic = data.phonetic || (data.phonetics && data.phonetics[0] ? data.phonetics[0].text : "");
-    
-    const result = {
-      word: word,
-      translation: word, // opcional: traduzir aqui se tiver outra API gratuita
-      phonetic: phonetic
-    };
-
-    cache[word] = result;
-    return result;
-  } catch (err) {
-    return { error: "Não foi possível obter dados da palavra." };
+    console.error("Erro no Gemini:", err);
+    return "";
   }
 }
 
-// Endpoint de tradução + fonética
+// Função para buscar fonética + áudio no Free Dictionary API
+async function fetchFromFreeDictionary(word) {
+  try {
+    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+    if (!res.ok) return {};
+    const data = await res.json();
+
+    return {
+      phonetic: data[0]?.phonetic || "",
+      audio: data[0]?.phonetics?.find(p => p.audio)?.audio || ""
+    };
+  } catch (err) {
+    console.error("Erro no Free Dictionary:", err);
+    return {};
+  }
+}
+
+// Função principal para obter os dados
+async function getWordData(word) {
+  if (!word) return null;
+
+  // 1. Tenta nas palavras fixas
+  let fixed = fixedWords.find(w => w.word.toLowerCase() === word.toLowerCase());
+  if (fixed) {
+    return {
+      word: fixed.word,
+      translation: fixed.translation,
+      phonetic: fixed.phonetic || "",
+      audio: fixed.audio || `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(word)}`
+    };
+  }
+
+  // 2. Busca nos serviços externos
+  const [translation, dictData] = await Promise.all([
+    fetchFromGemini(word),
+    fetchFromFreeDictionary(word)
+  ]);
+
+  return {
+    word,
+    translation: translation || "Tradução não encontrada",
+    phonetic: dictData.phonetic || "",
+    audio: dictData.audio || `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(word)}`
+  };
+}
+
+// Endpoint de tradução
 app.get("/translate/:word", async (req, res) => {
-  const { word } = req.params;
+  const word = req.params.word;
   const result = await getWordData(word);
+
+  if (!result) {
+    return res.status(404).json({ error: "Palavra não encontrada." });
+  }
+
   res.json(result);
 });
 
-// Proxy de TTS para evitar problemas de CORS
-app.get("/tts/:word", async (req, res) => {
-  const { word } = req.params;
-  if (!word) return res.status(400).send("Palavra inválida");
-
-  try {
-    // Usando TTS gratuito sem key (voz simples)
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(word)}`;
-
-    const response = await axios({
-      method: "GET",
-      url: ttsUrl,
-      responseType: "stream",
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
-    });
-
-    res.setHeader("Content-Type", "audio/mpeg");
-    response.data.pipe(res);
-  } catch (err) {
-    res.status(500).send("Erro ao gerar áudio TTS");
-  }
-});
-
-// Inicia servidor
+// Start
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
