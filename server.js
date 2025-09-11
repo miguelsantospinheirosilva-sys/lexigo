@@ -44,7 +44,7 @@ function loadLocalDictionary() {
     const wordFile = fs.readFileSync(path.join(baseDir, "words.json"), "utf-8");
     words = JSON.parse(wordFile);
   } catch (err) {
-    console.warn("⚠️ words.json não encontrado ou inválido");
+    console.warn(" words.json não encontrado ou inválido");
   }
 
   try {
@@ -55,4 +55,4 @@ function loadLocalDictionary() {
     const expressions = JSON.parse(exprFile);
     words = { ...words, ...expressions };
   } catch (err) {
-    console.warn("⚠️ expressions.json não encontrado ou invál
+    console.warn(" expressions.json não encontrado ou invál
