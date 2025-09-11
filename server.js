@@ -26,7 +26,7 @@ try {
   console.warn("expressions.json não encontrado ou inválido");
 }
 
-// Cache interno
+// Cache para evitar chamadas repetidas
 const cache = {};
 
 // Função para pegar fonética e áudio via dictionaryapi.dev
@@ -48,98 +48,96 @@ async function getDictionaryData(word) {
   return { phonetic: "", audio: "" };
 }
 
-// Função de fallback 1: LibreTranslate
+// Função de tradução usando LibreTranslate
 async function translateLibre(word) {
   try {
-    const response = await fetch("https://libretranslate.com/translate", {
+    const res = await fetch("https://libretranslate.com/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        q: word,
-        source: "en",
-        target: "pt",
-        format: "text"
-      })
+      body: JSON.stringify({ q: word, source: "en", target: "pt" })
     });
-    const data = await response.json();
-    if (data?.translatedText) return data.translatedText;
+    const data = await res.json();
+    return data.translatedText || "";
   } catch (err) {
-    console.error("Erro LibreTranslate:", err);
+    console.warn("Erro LibreTranslate:", err);
+    return "";
   }
-  return null;
 }
 
-// Função de fallback 2: MyMemory API
+// Função de tradução usando MyMemory
 async function translateMyMemory(word) {
   try {
-    const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|pt`);
-    const data = await response.json();
-    if (data?.responseData?.translatedText) return data.responseData.translatedText;
+    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|pt`);
+    const data = await res.json();
+    return data.responseData.translatedText || "";
   } catch (err) {
-    console.error("Erro MyMemory API:", err);
+    console.warn("Erro MyMemory:", err);
+    return "";
   }
-  return null;
 }
 
-// Função de fallback 3: Lingva Translate (ou outro endpoint público)
+// Função de tradução usando Lingva (proxy do Google Translate)
 async function translateLingva(word) {
   try {
-    const response = await fetch(`https://lingva.ml/api/v1/en/pt/${encodeURIComponent(word)}`);
-    const data = await response.json();
-    if (data?.translation) return data.translation;
+    const res = await fetch(`https://lingva.ml/api/v1/en/pt/${encodeURIComponent(word)}`);
+    const data = await res.json();
+    return data.translation || "";
   } catch (err) {
-    console.error("Erro Lingva Translate:", err);
+    console.warn("Erro Lingva:", err);
+    return "";
   }
-  return null;
 }
 
-// Função principal de tradução
+// Função principal de tradução com fallback
 async function getTranslation(word) {
-  // 1️⃣ Tenta JSON local
-  let translation = words[word] || expressions[word] || null;
+  if (cache[word]) return cache[word];
 
-  if (translation) return translation;
+  // 1. JSON local
+  if (words[word]) {
+    cache[word] = words[word];
+    return words[word];
+  }
+  if (expressions[word]) {
+    cache[word] = expressions[word];
+    return expressions[word];
+  }
 
-  // 2️⃣ Tenta LibreTranslate
-  translation = await translateLibre(word);
-  if (translation) return translation;
+  // 2. Tenta LibreTranslate
+  let translation = await translateLibre(word);
+  if (translation) {
+    cache[word] = translation;
+    return translation;
+  }
 
-  // 3️⃣ Tenta MyMemory API
+  // 3. Tenta MyMemory
   translation = await translateMyMemory(word);
-  if (translation) return translation;
+  if (translation) {
+    cache[word] = translation;
+    return translation;
+  }
 
-  // 4️⃣ Tenta Lingva Translate
+  // 4. Tenta Lingva
   translation = await translateLingva(word);
-  if (translation) return translation;
+  if (translation) {
+    cache[word] = translation;
+    return translation;
+  }
 
   return "Tradução não encontrada";
 }
 
-// Rota principal
 app.get("/api/word/:word", async (req, res) => {
   const wordKey = req.params.word.toLowerCase();
 
-  // Retorna do cache se já consultado
-  if (cache[wordKey]) return res.json(cache[wordKey]);
-
-  // Pega fonética e áudio
+  const translation = await getTranslation(wordKey);
   const dictData = await getDictionaryData(wordKey);
 
-  // Pega tradução usando fallback
-  const translation = await getTranslation(wordKey);
-
-  // Monta resposta final
-  const result = {
+  res.json({
     word: wordKey,
     translation,
-    phonetic: dictData.phonetic || "—",
-    audio: dictData.audio || ""
-  };
-
-  // Salva no cache
-  cache[wordKey] = result;
-
-  res.json(result);
+    phonetic: dictData.phonetic,
+    audio: dictData.audio
+  });
 });
 
 app.listen(PORT, () => {
