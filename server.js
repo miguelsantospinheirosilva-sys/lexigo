@@ -1,68 +1,69 @@
 import express from "express";
-import fetch from "node-fetch";
 import cors from "cors";
-import dotenv from "dotenv";
+import fetch from "node-fetch";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-
-dotenv.config();
 
 const app = express();
 app.use(cors());
-const PORT = process.env.PORT || 10000;
+app.use(express.json());
 
-// Gemini config
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// Gemini com chave vinda do Render (variável de ambiente GOOGLE_API_KEY)
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
-// Função para tradução via Gemini
-async function translateWithGemini(word) {
+// Função auxiliar para traduzir via Gemini
+async function traduzirComGemini(word) {
   try {
-    const prompt = `Translate the word "${word}" from English to Brazilian Portuguese. Only return the translated word, nothing else.`;
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const prompt = `Traduza a palavra "${word}" para português em UMA única palavra, sem explicações adicionais.`;
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text().trim();
-
-    return text || null;
-  } catch (err) {
-    console.error("Erro no Gemini:", err.message);
+    return result.response.text().trim();
+  } catch (error) {
+    console.error("Erro no Gemini:", error);
     return null;
   }
 }
 
-// Rota principal
-app.get("/word/:term", async (req, res) => {
-  const term = req.params.term;
+app.get("/api/word/:word", async (req, res) => {
+  const word = req.params.word;
 
   try {
-    // Busca na dictionaryapi.dev
-    const dictResponse = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${term}`
+    // 1) Buscar no dicionário público
+    const response = await fetch(
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`
     );
+    const data = await response.json();
 
-    let phonetic = null;
-    let audio = null;
+    let phonetic = "";
+    let audio = "";
+    let translation = null;
 
-    if (dictResponse.ok) {
-      const dictData = await dictResponse.json();
-      phonetic = dictData[0]?.phonetics[0]?.text || null;
-      audio = dictData[0]?.phonetics[0]?.audio || null;
+    if (Array.isArray(data) && data[0]) {
+      phonetic = data[0].phonetic || "";
+      if (data[0].phonetics && data[0].phonetics.length > 0) {
+        const audioObj = data[0].phonetics.find((p) => p.audio);
+        if (audioObj) {
+          audio = audioObj.audio;
+        }
+      }
     }
 
-    // Tradução pelo Gemini
-    const translation = await translateWithGemini(term);
+    // 2) Tradução pelo Gemini
+    translation = await traduzirComGemini(word);
 
     res.json({
-      word: term,
+      word,
       translation: translation || "Tradução não encontrada",
-      phonetic: phonetic || "Não disponível",
-      audio: audio || null,
+      phonetic,
+      audio,
     });
-  } catch (err) {
-    console.error("Erro geral:", err.message);
-    res.status(500).json({ error: "Erro no servidor" });
+  } catch (error) {
+    console.error("Erro geral:", error);
+    res.status(500).json({ error: "Erro ao buscar palavra" });
   }
 });
 
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
