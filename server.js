@@ -1,133 +1,90 @@
 // server.js
-import express from "express";
-import cors from "cors";
-import fs from "fs";
-import axios from "axios";
-import fetch from "node-fetch";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import express from 'express';
+import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import cors from 'cors';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+// Sua API key do Gemini
+const GEMINI_API_KEY = 'AIzaSyCjpLTtmRSQiRH0CVVVWLsqlQK-KIIXx7U';
 
-// Carregar arquivos JSON fixos
-const fixedFiles = ["bloco1.json","bloco2.json","bloco3.json","bloco4.json","bloco5.json"];
-let fixedWords = [];
-
-for (const file of fixedFiles) {
-  try {
-    const data = fs.readFileSync(path.join(__dirname, file), "utf-8");
-    const json = JSON.parse(data);
-
-    if (json.words) {
-      fixedWords = fixedWords.concat(json.words.filter(w => w.word));
+// Função para buscar no Free Dictionary API
+async function getDictionaryData(word) {
+    try {
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+        const data = await res.json();
+        const entry = data[0] || {};
+        return {
+            phonetic: entry.phonetic || (entry?.phonetics?.[0]?.text || ''),
+            audio: entry?.phonetics?.[0]?.audio || ''
+        };
+    } catch (e) {
+        return { phonetic: '', audio: '' };
     }
-  } catch (err) {
-    console.error(`Erro ao carregar ${file}:`, err.message);
-  }
 }
 
-// Cache interno
-let cache = {};
-
-// Chave Gemini API
-const GEMINI_API_KEY = "AIzaSyCjpLTtmRSQiRH0CVVVWLsqlQK-KIIXx7U";
-
-// Função para obter dados da palavra
-async function getWordData(word) {
-  if (!word) return { error: "Palavra inválida" };
-  const lw = word.toLowerCase();
-
-  if (cache[lw]) return cache[lw];
-
-  // Verifica nos fixedWords
-  const fixed = fixedWords.find(w => w.word.toLowerCase() === lw);
-  if (fixed) {
-    cache[lw] = fixed;
-    return fixed;
-  }
-
-  let translation = "Tradução não encontrada";
-  let phonetic = "";
-  let audioUrl = "";
-
-  // 1️⃣ Tentar Gemini API para tradução
-  try {
-    const res = await axios.post(
-      "https://translation.googleapis.com/language/translate/v2",
-      {},
-      {
-        params: {
-          q: word,
-          target: "pt",
-          key: GEMINI_API_KEY
-        }
-      }
-    );
-    if (res.data && res.data.data && res.data.data.translations) {
-      translation = res.data.data.translations[0].translatedText || translation;
+// Função para buscar tradução via Gemini
+async function getGeminiTranslation(word) {
+    try {
+        const res = await fetch('https://translation.googleapis.com/language/translate/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                q: word,
+                target: 'pt',
+                format: 'text',
+                key: GEMINI_API_KEY
+            })
+        });
+        const data = await res.json();
+        return data?.data?.translations?.[0]?.translatedText || '';
+    } catch (e) {
+        return '';
     }
-  } catch (err) {
-    console.log("Gemini API falhou:", err.message);
-  }
-
-  // 2️⃣ DictionaryAPI para fonético
-  try {
-    const dictRes = await axios.get(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-    const dictData = dictRes.data[0];
-
-    if (dictData) {
-      phonetic = dictData.phonetic || "";
-      if (dictData.phonetics && dictData.phonetics.length > 0) {
-        const audioObj = dictData.phonetics.find(p => p.audio) || dictData.phonetics[0];
-        audioUrl = audioObj.audio || "";
-      }
-    }
-  } catch (err) {
-    console.log("DictionaryAPI falhou:", err.message);
-  }
-
-  // 3️⃣ Fallback TTS gratuito
-  if (!audioUrl) {
-    audioUrl = `/tts?word=${encodeURIComponent(word)}`;
-  }
-
-  const result = { word, translation, phonetic, audio: audioUrl };
-  cache[lw] = result;
-  return result;
 }
 
-// Proxy TTS
-app.get("/tts", async (req, res) => {
-  const { word } = req.query;
-  if (!word) return res.status(400).send("Missing word");
-
-  try {
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(word)}`;
-    const response = await fetch(ttsUrl);
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(buffer);
-  } catch (err) {
-    console.error("Erro TTS:", err.message);
-    res.status(500).send("Erro ao gerar áudio");
-  }
-});
+// Função para gerar URL de áudio via Voicerss TTS gratuita
+function getTTSUrl(word) {
+    // Se quiser, você pode substituir pela sua key Voicerss
+    const VOICERSS_KEY = 'DEMO'; 
+    return `https://api.voicerss.org/?key=${VOICERSS_KEY}&hl=en-us&src=${encodeURIComponent(word)}&c=MP3&f=44khz_16bit_stereo`;
+}
 
 // Endpoint principal
-app.get("/translate/:word", async (req, res) => {
-  const { word } = req.params;
-  const data = await getWordData(word);
-  res.json(data);
+app.get('/word/:word', async (req, res) => {
+    const word = req.params.word;
+
+    // Pega dados do dicionário
+    const dictData = await getDictionaryData(word);
+
+    // Pega tradução via Gemini
+    const translation = await getGeminiTranslation(word) || word;
+
+    // Decide qual áudio usar
+    const audio = dictData.audio || getTTSUrl(word);
+
+    res.json({
+        word,
+        translation,
+        phonetic: dictData.phonetic || '',
+        audio
+    });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Proxy para TTS (resolve CORS)
+app.get('/audio/:word', async (req, res) => {
+    const word = req.params.word;
+    const audioUrl = getTTSUrl(word);
+    const response = await fetch(audioUrl);
+    const arrayBuffer = await response.arrayBuffer();
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(Buffer.from(arrayBuffer));
 });
+
+// Start server
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
