@@ -26,7 +26,7 @@ try {
   console.warn("expressions.json não encontrado ou inválido");
 }
 
-// Cache para palavras consultadas
+// Cache interno
 const cache = {};
 
 // Função para pegar fonética e áudio via dictionaryapi.dev
@@ -48,51 +48,87 @@ async function getDictionaryData(word) {
   return { phonetic: "", audio: "" };
 }
 
-// Fallback assíncrono com Gemini (ou outra API externa)
-async function getGeminiFallback(word) {
+// Função de fallback 1: LibreTranslate
+async function translateLibre(word) {
   try {
-    // Aqui você coloca a chamada à API Gemini
-    // Exemplo (pseudo-código):
-    /*
-    const response = await fetch("URL_GEMINI", {
+    const response = await fetch("https://libretranslate.com/translate", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.GEMINI_KEY}` },
-      body: JSON.stringify({ prompt: `Traduza a palavra "${word}" e forneça a fonética` })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        q: word,
+        source: "en",
+        target: "pt",
+        format: "text"
+      })
     });
     const data = await response.json();
-    return {
-      translation: data.translation || "",
-      phonetic: data.phonetic || ""
-    };
-    */
-    return { translation: "", phonetic: "" }; // placeholder se não usar ainda
+    if (data?.translatedText) return data.translatedText;
   } catch (err) {
-    console.error("Erro Gemini:", err);
-    return { translation: "", phonetic: "" };
+    console.error("Erro LibreTranslate:", err);
   }
+  return null;
 }
 
+// Função de fallback 2: MyMemory API
+async function translateMyMemory(word) {
+  try {
+    const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|pt`);
+    const data = await response.json();
+    if (data?.responseData?.translatedText) return data.responseData.translatedText;
+  } catch (err) {
+    console.error("Erro MyMemory API:", err);
+  }
+  return null;
+}
+
+// Função de fallback 3: Lingva Translate (ou outro endpoint público)
+async function translateLingva(word) {
+  try {
+    const response = await fetch(`https://lingva.ml/api/v1/en/pt/${encodeURIComponent(word)}`);
+    const data = await response.json();
+    if (data?.translation) return data.translation;
+  } catch (err) {
+    console.error("Erro Lingva Translate:", err);
+  }
+  return null;
+}
+
+// Função principal de tradução
+async function getTranslation(word) {
+  // 1️⃣ Tenta JSON local
+  let translation = words[word] || expressions[word] || null;
+
+  if (translation) return translation;
+
+  // 2️⃣ Tenta LibreTranslate
+  translation = await translateLibre(word);
+  if (translation) return translation;
+
+  // 3️⃣ Tenta MyMemory API
+  translation = await translateMyMemory(word);
+  if (translation) return translation;
+
+  // 4️⃣ Tenta Lingva Translate
+  translation = await translateLingva(word);
+  if (translation) return translation;
+
+  return "Tradução não encontrada";
+}
+
+// Rota principal
 app.get("/api/word/:word", async (req, res) => {
   const wordKey = req.params.word.toLowerCase();
 
   // Retorna do cache se já consultado
-  if (cache[wordKey]) {
-    return res.json(cache[wordKey]);
-  }
+  if (cache[wordKey]) return res.json(cache[wordKey]);
 
-  // 1️⃣ Tenta JSON local
-  let translation = words[wordKey] || expressions[wordKey] || null;
-
-  // 2️⃣ Pega fonética e áudio
+  // Pega fonética e áudio
   const dictData = await getDictionaryData(wordKey);
 
-  // 3️⃣ Se não encontrou tradução, tenta fallback assíncrono com Gemini
-  if (!translation) {
-    const geminiData = await getGeminiFallback(wordKey);
-    translation = geminiData.translation || "Tradução não encontrada";
-  }
+  // Pega tradução usando fallback
+  const translation = await getTranslation(wordKey);
 
-  // 4️⃣ Monta resposta final
+  // Monta resposta final
   const result = {
     word: wordKey,
     translation,
