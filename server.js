@@ -1,58 +1,98 @@
 import express from "express";
-import fetch from "node-fetch";
+import cors from "cors";
 import fs from "fs";
 import path from "path";
-
-// 🔹 Se quiser usar Gemini, descomente:
-// import { GoogleGenerativeAI } from "@google/generative-ai";
+import fetch from "node-fetch";
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// 🔹 Dicionário fallback (se não encontrar em JSON ou Gemini)
-const fallbackDictionary = {
-  dog: "cachorro",
-  cat: "gato",
-  house: "casa",
-  apple: "maçã",
-  book: "livro",
-  love: "amor",
-};
+app.use(cors());
+app.use(express.json());
 
-// 🔹 Função para buscar tradução no Gemini (se habilitado)
-/*
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-async function translateWithGemini(word) {
+// Caminho para os arquivos JSON locais
+const wordsPath = path.resolve("./words.json");
+const expressionsPath = path.resolve("./expressions.json");
+
+// Função para ler JSON local
+function loadJSON(filePath) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const prompt = `Translate the English word "${word}" into Brazilian Portuguese. Return only the translation.`;
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, "utf-8");
+      return JSON.parse(data);
+    } else {
+      console.warn(`[WARN] ${filePath} não encontrado`);
+      return {};
+    }
   } catch (err) {
-    console.error("Erro no Gemini:", err);
-    return null;
+    console.error(`[ERROR] Falha ao ler ${filePath}:`, err);
+    return {};
   }
 }
-*/
 
-// 🔹 Carregar arquivos JSON locais (words.json, expressions.json etc.)
-function loadLocalDictionary() {
-  const baseDir = path.resolve("data"); // pasta "data" no projeto
-  let words = {};
+// Carrega dados iniciais
+let wordsData = loadJSON(wordsPath);
+let expressionsData = loadJSON(expressionsPath);
 
-  try {
-    const wordFile = fs.readFileSync(path.join(baseDir, "words.json"), "utf-8");
-    words = JSON.parse(wordFile);
-  } catch (err) {
-    console.warn(" words.json não encontrado ou inválido");
+// Endpoint principal de consulta
+app.get("/lookup/:word", async (req, res) => {
+  const query = req.params.word.toLowerCase();
+
+  // 1️⃣ Procura no JSON local (palavras)
+  if (wordsData[query]) {
+    return res.json({
+      word: query,
+      translation: wordsData[query].translation || "Tradução não encontrada",
+      phonetic: wordsData[query].phonetic || null,
+      audio: wordsData[query].audio || null,
+    });
   }
 
+  // 2️⃣ Procura em expressions.json
+  if (expressionsData[query]) {
+    return res.json({
+      word: query,
+      translation: expressionsData[query].translation || "Tradução não encontrada",
+      phonetic: expressionsData[query].phonetic || null,
+      audio: expressionsData[query].audio || null,
+    });
+  }
+
+  // 3️⃣ Consulta API externa como fallback
   try {
-    const exprFile = fs.readFileSync(
-      path.join(baseDir, "expressions.json"),
-      "utf-8"
-    );
-    const expressions = JSON.parse(exprFile);
-    words = { ...words, ...expressions };
+    const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${query}`);
+    const data = await response.json();
+
+    if (Array.isArray(data) && data.length > 0) {
+      const first = data[0];
+      const phonetic = first.phonetic || (first.phonetics && first.phonetics[0]?.text) || null;
+      const audio = first.phonetics && first.phonetics[0]?.audio ? first.phonetics[0].audio : null;
+
+      return res.json({
+        word: query,
+        translation: query, // A tradução real ainda pode vir do Gemini, se configurado
+        phonetic,
+        audio,
+      });
+    } else {
+      return res.json({
+        word: query,
+        translation: "Tradução não encontrada",
+        phonetic: null,
+        audio: null,
+      });
+    }
   } catch (err) {
-    console.warn(" expressions.json não encontrado ou invál
+    console.error("[ERROR] Falha ao consultar API externa:", err);
+    return res.status(500).json({
+      word: query,
+      translation: "Erro na consulta",
+      phonetic: null,
+      audio: null,
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
